@@ -1,201 +1,219 @@
 // src/main.rs
 
-use clap::Parser;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader};
-use std::process;
-use std::path::Path; 
+// --- Impor Crate dan Modul Standar ---
+use clap::Parser;                      // Untuk parsing argumen command-line
+use once_cell::sync::Lazy;             // Untuk inisialisasi lazy static
+use std::fs::File;                     // Untuk membuka file
+use std::io::{self, BufRead, BufReader}; // Untuk I/O, terutama membaca per baris
+use std::path::Path;                   // Untuk bekerja dengan path file (mendapatkan ekstensi)
+use std::process;                      // Untuk keluar program (process::exit)
+use syntect::easy::HighlightLines;     // Helper syntect untuk highlighting per baris
+use syntect::highlighting::{Theme, ThemeSet, Style}; // Komponen syntect untuk tema dan style
+use syntect::parsing::SyntaxSet;       // Komponen syntect untuk definisi sintaks
+use syntect::util::as_24_bit_terminal_escaped; // Helper syntect untuk output terminal berwarna
 
-// Tambah use statement buat syntect dan once_cell 
-use syntect::easy::HighlightLines;
-use syntect::parsing::SyntaxSet;
-use syntect::highlighting::{ThemeSet, Style};
-use syntect::util::as_24_bit_terminal_escaped; // konversi ke ANSI escape code
-use once_cell::sync::Lazy; // inisialisasi lazy static
 
-
-// --- Definisi Global Lazy Static untuk SyntaxSet dan ThemeSet ---
-// Mastiin hanya memuat definisi sintaks dan tema sekali saja
+// --- Definisi Global (Lazy Static) ---
+// Memuat definisi sintaks dan tema hanya sekali saat pertama kali dibutuhkan
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| {
-    // Memuat definisi sintaks bawaan syntect (termasuk banyak bahasa populer)
     SyntaxSet::load_defaults_newlines()
 });
 static THEME_SET: Lazy<ThemeSet> = Lazy::new(|| {
-    // Load tema warna bawaan syntect
     ThemeSet::load_defaults()
 });
 
 
-
+// --- Definisi Struktur Argumen CLI menggunakan clap ---
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Alternatif 'cat' ditulis dengan Rust", long_about = None)]
+#[command(
+    author,
+    version,
+    about = "rcat: Alternatif 'cat' modern ditulis dengan Rust.",
+    long_about = None // Bisa ditambahkan deskripsi panjang jika perlu
+)]
 struct Cli {
-    #[arg(short, long)]
+    /// Tampilkan nomor pada setiap baris output
+    #[arg(short, long)] // -n, --number
     number: bool,
 
+    /// Nama tema syntax highlighting yang ingin digunakan (lihat --list-themes)
+    #[arg(long)] // --theme <NAMA>
+    theme: Option<String>, // Opsional
+
+    /// Tampilkan daftar semua tema yang tersedia dan keluar
+    #[arg(long)] // --list-themes
+    list_themes: bool,
+
+    /// Daftar file yang akan diproses (jika kosong, baca dari stdin)
     #[arg()]
     files: Vec<String>,
-
-    // TODO: Tambahkan opsi untuk memilih tema nanti?
-    // #[arg(long, default_value = "base16-ocean.dark")]
-    // theme: String,
 }
 
 
-// --- Modifikasi Besar pada Fungsi process_file ---
-fn process_file(filename: &str, number_lines: bool) -> io::Result<()> {
-    // --- Deteksi Sintaks ---
+// --- Fungsi Helper untuk Mendapatkan Tema ---
+// Mengembalikan referensi ke tema berdasarkan nama, dengan fallback ke default
+fn get_theme<'a>(theme_name: &str) -> &'a Theme {
+    THEME_SET.themes.get(theme_name)
+        .unwrap_or_else(|| {
+            eprintln!(
+                "rcat: Peringatan: Tema '{}' tidak ditemukan. Menggunakan default 'base16-ocean.dark'.",
+                theme_name
+            );
+            // Fallback ke tema default yang pasti ada
+            &THEME_SET.themes["base16-ocean.dark"]
+        })
+}
+
+
+// --- Fungsi untuk Memproses Satu File ---
+fn process_file(filename: &str, number_lines: bool, theme_name: &str) -> io::Result<()> {
     let path = Path::new(filename);
-    // Coba tebak sintaks berdasarkan ekstensi file
+
+    // Deteksi sintaks berdasarkan ekstensi file, fallback ke plain text
     let syntax = SYNTAX_SET.find_syntax_by_extension(
-        path.extension()            // Dapatkan ekstensi file (Option<&OsStr>)
-            .and_then(|s| s.to_str()) // Konversi ke Option<&str>
-            .unwrap_or("")           // Jika tidak ada ekstensi, pakai string kosong
-    )
-    // Jika tidak terdeteksi berdasarkan ekstensi, coba tebak dari baris pertama (opsional, bisa dilewati)
-    // .or_else(|| SYNTAX_SET.find_syntax_by_first_line(isi_baris_pertama))
-    // Jika tetap tidak terdeteksi, gunakan sintaks plain text
-    .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+        path.extension().and_then(|s| s.to_str()).unwrap_or("")
+    ).unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
 
-    // --- Pilih Tema ---
-    // Untuk saat ini, kita hardcode tema populer. Nanti bisa dibuat opsi.
-    // Pastikan tema ini ada di ThemeSet::load_defaults()
-    let theme_name = "base16-ocean.dark";
-    let theme = THEME_SET.themes.get(theme_name).unwrap_or_else(|| {
-        eprintln!("Peringatan: Tema '{}' tidak ditemukan, menggunakan tema default pertama.", theme_name);
-        &THEME_SET.themes.values().next().unwrap() // Fallback ke tema pertama jika pilihan kita tidak ada
-    });
+    // Dapatkan tema menggunakan fungsi helper (sudah handle fallback)
+    let theme = get_theme(theme_name);
 
-
-    // --- Persiapan Highlighting ---
-    // Membuat instance highlighter untuk file ini
+    // Buat instance highlighter
     let mut highlighter = HighlightLines::new(syntax, theme);
 
-    // --- Membaca dan Mencetak File Baris per Baris dengan Highlighting ---
+    // Buka file dan siapkan reader
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
-    let mut line_num = 1;
+    let mut line_num = 1; // Counter nomor baris
 
+    // Proses baris per baris
     for line_result in reader.lines() {
-        let line = line_result?;
+        let line = line_result?; // Tangani error pembacaan baris
 
-        // Highlight satu baris. Hasilnya adalah Vec dari tuple (Style, &str segment)
-        // Kita gunakan unwrap() di sini untuk simplifikasi, idealnya tangani error parsing
-        let ranges: Vec<(Style, &str)> = highlighter.highlight_line(&line, &SYNTAX_SET).unwrap();
+        // Lakukan highlighting per baris
+        let ranges: Vec<(Style, &str)> = highlighter.highlight_line(&line, &SYNTAX_SET)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Syntect error: {}", e)))?; // Konversi error syntect ke io::Error
 
-        // 1. Cetak nomor baris jika diminta (sebelum mencetak isi baris)
+        // Cetak nomor baris jika flag -n aktif
         if number_lines {
-            print!("{:>6}\t", line_num);
+            print!("{:>6}\t", line_num); // Rata kanan, lebar 6, diikuti tab
         }
 
-        // 2. Cetak segmen-segmen baris yang sudah diberi style (warna)
-        //    Fungsi as_24_bit_terminal_escaped mengonversi Vec<(Style, &str)>
-        //    menjadi string dengan ANSI escape codes untuk warna 24-bit (true color).
-        //    Parameter kedua (true) berarti kita juga ingin warna background diterapkan.
+        // Cetak segmen baris yang sudah diwarnai
         print!("{}", as_24_bit_terminal_escaped(&ranges[..], true));
 
-        // 3. Tambahkan newline secara manual
-        //    Karena reader.lines() menghilangkan newline dan as_24_bit_terminal_escaped
-        //    tidak menambahkannya kembali, kita perlu menambahkannya agar format tetap benar.
-        println!(); // Cetak newline kosong
+        // Tambahkan newline kembali (karena .lines() menghilangkannya)
+        println!();
 
-        // Naikkan nomor baris
+        // Increment nomor baris
         line_num += 1;
     }
 
-    Ok(())
+    Ok(()) // Kembalikan Ok jika sukses
 }
-// --- Akhir Modifikasi Besar process_file ---
 
-fn process_stdin(number_lines: bool) -> io::Result<()>{
-        // Beri pesan info ke stderr agar pengguna tahu program menunggu input
-        eprintln!("(Membaca dari standard input. Tekan Ctrl+D untuk mengakhiri.)");
 
-        // Untuk stdin, kita gunakan sintaks plain text
-        let syntax = SYNTAX_SET.find_syntax_plain_text();
-        // gunakan tema yang sama agar konsisten
-        let theme_name = "base16-ocean.dark";
-        let theme = THEME_SET.themes.get(theme_name).unwrap_or_else(|| {
-            eprintln!("Peringatan: Tema '{}' tidak ditemukan, menggunakan tema default pertama.", theme_name);
-            &THEME_SET.themes.values().next().unwrap()
-        });
-        let mut highlighter = HighlightLines::new(syntax, theme);
+// --- Fungsi untuk Memproses Standard Input ---
+fn process_stdin(number_lines: bool, theme_name: &str) -> io::Result<()> {
+    // Pesan info bahwa program menunggu input
+    eprintln!("(Membaca dari standard input. Tekan Ctrl+D untuk selesai)");
 
-        // handle ke stdin
-        let stdin = io::stdin();
-        let mut handle = stdin.lock();
+    // Asumsikan stdin adalah plain text
+    let syntax = SYNTAX_SET.find_syntax_plain_text();
 
-        let mut line_num = 1;
-        let mut line_buffer = String::new();
+    // Dapatkan tema menggunakan fungsi helper
+    let theme = get_theme(theme_name);
 
-        // Baca baris per baris dari stdin menggunakan read_line
-    // read_line mengembalikan jumlah byte yang dibaca. 0 berarti EOF (End Of File).
+    // Buat instance highlighter untuk plain text
+    let mut highlighter = HighlightLines::new(syntax, theme);
+
+    // Dapatkan handle ke stdin dan kunci untuk pembacaan
+    let stdin = io::stdin();
+    let mut handle = stdin.lock();
+
+    let mut line_num = 1; // Counter nomor baris
+    let mut line_buffer = String::new(); // Buffer untuk menampung tiap baris
+
+    // Baca dari stdin baris per baris sampai EOF
     while handle.read_line(&mut line_buffer)? > 0 {
-        // Hilangkan newline di akhir (jika ada) sebelum highlighting
+        // Hilangkan newline di akhir sebelum highlighting
         let trimmed_line = line_buffer.trim_end_matches('\n');
 
         // Highlight baris (sebagai plain text)
         let ranges: Vec<(Style, &str)> = highlighter
             .highlight_line(trimmed_line, &SYNTAX_SET)
-            .unwrap(); // Asumsi highlighting plain text tidak gagal
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Syntect error: {}", e)))?; // Konversi error syntect ke io::Error
 
-        // Cetak nomor baris jika diminta
+        // Cetak nomor baris jika flag -n aktif
         if number_lines {
             print!("{:>6}\t", line_num);
         }
-        // Cetak baris yang sudah (atau tidak) di-highlight
+
+        // Cetak segmen baris yang sudah (atau tidak) di-highlight
         print!("{}", as_24_bit_terminal_escaped(&ranges[..], true));
-        // Tambahkan kembali newline
+
+        // Tambahkan newline kembali
         println!();
 
         // Naikkan nomor baris
         line_num += 1;
-        // Kosongkan buffer untuk pembacaan baris berikutnya
+        // Kosongkan buffer untuk baris berikutnya
         line_buffer.clear();
     }
 
-    Ok(())
+    Ok(()) // Kembalikan Ok jika sukses
 }
-// --- Akhir Fungsi Baru ---
 
 
+// --- Fungsi Utama (main) ---
 fn main() {
+    // Parse argumen command line menggunakan clap
     let cli = Cli::parse();
 
-      // --- Deklarasikan di sini! ---
-    // Deklarasikan flag error SEBELUM percabangan if/else
+    // --- Handle jika pengguna meminta daftar tema ---
+    if cli.list_themes {
+        println!("Tema yang tersedia:");
+        // Iterasi melalui nama-nama tema yang dimuat
+        for theme_name in THEME_SET.themes.keys() {
+            println!("- {}", theme_name);
+        }
+        // Keluar program setelah mencetak daftar
+        process::exit(0);
+    }
+
+    // Flag untuk melacak jika terjadi error saat memproses file/stdin
     let mut any_error_occurred = false;
-    // --- Akhir Deklarasi ---
 
+    // Tentukan nama tema yang akan digunakan (dari argumen atau default)
+    let theme_name_to_use = cli.theme.as_deref().unwrap_or("base16-ocean.dark");
 
+    // --- Logika utama: proses stdin atau file ---
     if cli.files.is_empty() {
-        // Handle Standard Input
-        match process_stdin(cli.number) {
-            Ok(_) => {}
+        // Jika tidak ada argumen file, proses standard input
+        match process_stdin(cli.number, theme_name_to_use) {
+            Ok(_) => {} // Sukses
             Err(e) => {
                 eprintln!("rcat: Gagal membaca standard input: {}", e);
-                // Sekarang 'any_error_occurred' bisa diakses di sini
-                any_error_occurred = true;
+                any_error_occurred = true; // Tandai ada error
             }
         }
     } else {
-        // Handle Files
+        // Jika ada argumen file, proses setiap file dalam loop
         for filename in &cli.files {
-            match process_file(filename, cli.number) {
-                Ok(_) => {}
+            match process_file(filename, cli.number, theme_name_to_use) {
+                Ok(_) => {} // Sukses untuk file ini
                 Err(e) => {
+                    // Cetak error spesifik untuk file yang gagal
                     eprintln!("rcat: {}: {}", filename, e);
-                    // Dan juga bisa diakses di sini
-                    any_error_occurred = true;
+                    any_error_occurred = true; // Tandai ada error
                 }
             }
         }
     }
 
-    // Periksa flag setelah if/else selesai
-    // 'any_error_occurred' juga harus bisa diakses di sini
+    // --- Tentukan status keluar program ---
+    // Jika ada error yang terjadi selama eksekusi, keluar dengan status 1
     if any_error_occurred {
         process::exit(1);
     }
-    // kalau gak error program jalan lancar
+    // Jika tidak ada error, program akan keluar secara normal dengan status 0
 }
