@@ -107,30 +107,95 @@ fn process_file(filename: &str, number_lines: bool) -> io::Result<()> {
 }
 // --- Akhir Modifikasi Besar process_file ---
 
+fn process_stdin(number_lines: bool) -> io::Result<()>{
+        // Beri pesan info ke stderr agar pengguna tahu program menunggu input
+        eprintln!("(Membaca dari standard input. Tekan Ctrl+D untuk mengakhiri.)");
+
+        // Untuk stdin, kita gunakan sintaks plain text
+        let syntax = SYNTAX_SET.find_syntax_plain_text();
+        // gunakan tema yang sama agar konsisten
+        let theme_name = "base16-ocean.dark";
+        let theme = THEME_SET.themes.get(theme_name).unwrap_or_else(|| {
+            eprintln!("Peringatan: Tema '{}' tidak ditemukan, menggunakan tema default pertama.", theme_name);
+            &THEME_SET.themes.values().next().unwrap()
+        });
+        let mut highlighter = HighlightLines::new(syntax, theme);
+
+        // handle ke stdin
+        let stdin = io::stdin();
+        let mut handle = stdin.lock();
+
+        let mut line_num = 1;
+        let mut line_buffer = String::new();
+
+        // Baca baris per baris dari stdin menggunakan read_line
+    // read_line mengembalikan jumlah byte yang dibaca. 0 berarti EOF (End Of File).
+    while handle.read_line(&mut line_buffer)? > 0 {
+        // Hilangkan newline di akhir (jika ada) sebelum highlighting
+        let trimmed_line = line_buffer.trim_end_matches('\n');
+
+        // Highlight baris (sebagai plain text)
+        let ranges: Vec<(Style, &str)> = highlighter
+            .highlight_line(trimmed_line, &SYNTAX_SET)
+            .unwrap(); // Asumsi highlighting plain text tidak gagal
+
+        // Cetak nomor baris jika diminta
+        if number_lines {
+            print!("{:>6}\t", line_num);
+        }
+        // Cetak baris yang sudah (atau tidak) di-highlight
+        print!("{}", as_24_bit_terminal_escaped(&ranges[..], true));
+        // Tambahkan kembali newline
+        println!();
+
+        // Naikkan nomor baris
+        line_num += 1;
+        // Kosongkan buffer untuk pembacaan baris berikutnya
+        line_buffer.clear();
+    }
+
+    Ok(())
+}
+// --- Akhir Fungsi Baru ---
+
 
 fn main() {
     let cli = Cli::parse();
 
-    if cli.files.is_empty() {
-        eprintln!("rcat: Tidak ada file input yang diberikan.");
-        eprintln!("Untuk bantuan, coba: rcat --help");
-        process::exit(1);
-    }
-
+      // --- Deklarasikan di sini! ---
+    // Deklarasikan flag error SEBELUM percabangan if/else
     let mut any_error_occurred = false;
+    // --- Akhir Deklarasi ---
 
-    for filename in &cli.files {
-        // Panggil process_file seperti biasa, flag number diteruskan
-        match process_file(filename, cli.number) {
+
+    if cli.files.is_empty() {
+        // Handle Standard Input
+        match process_stdin(cli.number) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("rcat: {}: {}", filename, e);
+                eprintln!("rcat: Gagal membaca standard input: {}", e);
+                // Sekarang 'any_error_occurred' bisa diakses di sini
                 any_error_occurred = true;
+            }
+        }
+    } else {
+        // Handle Files
+        for filename in &cli.files {
+            match process_file(filename, cli.number) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("rcat: {}: {}", filename, e);
+                    // Dan juga bisa diakses di sini
+                    any_error_occurred = true;
+                }
             }
         }
     }
 
+    // Periksa flag setelah if/else selesai
+    // 'any_error_occurred' juga harus bisa diakses di sini
     if any_error_occurred {
         process::exit(1);
     }
+    // Jika tidak ada error, program keluar secara normal (status 0)
 }
