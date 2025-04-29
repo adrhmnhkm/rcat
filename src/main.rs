@@ -197,5 +197,5 @@ fn main() {
     if any_error_occurred {
         process::exit(1);
     }
-    // Jika tidak ada error, program keluar secara normal (status 0)
+    // kalau gak error program jalan lancar
 }
