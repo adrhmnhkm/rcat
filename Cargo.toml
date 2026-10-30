@@ -2,10 +2,17 @@
 name = "rcat"
 version = "0.1.0"
 edition = "2024"
+authors = ["Adi Rahman Hakim <adrhmnhkm@gmail.com>"]
+description = "A modern, blazingly fast cat alternative written in pure Rust with syntax highlighting, git integration, and hex viewer."
+license = "MIT"
+repository = "https://github.com/adrhmnhkm/rcat"
+readme = "README.md"
+keywords = ["cat", "cli", "syntax-highlighting", "git", "hex"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
-# Tambahkan syntect untuk syntax highlighting
-syntect = "5.2.0" # Cek versi terbaru di crates.io jika perlu
-# Tambahkan once_cell untuk inisialisasi global yang efisien (lazy static)
+syntect = { version = "5.2.0", default-features = false, features = ["default-fancy"] }
 once_cell = "1.19.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"

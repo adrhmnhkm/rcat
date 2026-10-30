@@ -1,219 +1,193 @@
-// src/main.rs
+mod cli;
+mod config;
+mod git;
+mod hex;
+mod printer;
+mod syntax;
 
-// --- Impor Crate dan Modul Standar ---
-use clap::Parser;                      // Untuk parsing argumen command-line
-use once_cell::sync::Lazy;             // Untuk inisialisasi lazy static
-use std::fs::File;                     // Untuk membuka file
-use std::io::{self, BufRead, BufReader}; // Untuk I/O, terutama membaca per baris
-use std::path::Path;                   // Untuk bekerja dengan path file (mendapatkan ekstensi)
-use std::process;                      // Untuk keluar program (process::exit)
-use syntect::easy::HighlightLines;     // Helper syntect untuk highlighting per baris
-use syntect::highlighting::{Theme, ThemeSet, Style}; // Komponen syntect untuk tema dan style
-use syntect::parsing::SyntaxSet;       // Komponen syntect untuk definisi sintaks
-use syntect::util::as_24_bit_terminal_escaped; // Helper syntect untuk output terminal berwarna
+use clap::Parser;
+use cli::{Cli, StyleMode};
+use printer::Printer;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader};
+use std::path::Path;
+use std::process;
+use syntect::easy::HighlightLines;
 
-
-// --- Definisi Global (Lazy Static) ---
-// Memuat definisi sintaks dan tema hanya sekali saat pertama kali dibutuhkan
-static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(|| {
-    SyntaxSet::load_defaults_newlines()
-});
-static THEME_SET: Lazy<ThemeSet> = Lazy::new(|| {
-    ThemeSet::load_defaults()
-});
-
-
-// --- Definisi Struktur Argumen CLI menggunakan clap ---
-#[derive(Parser, Debug)]
-#[command(
-    author,
-    version,
-    about = "rcat: Alternatif 'cat' modern ditulis dengan Rust.",
-    long_about = None // Bisa ditambahkan deskripsi panjang jika perlu
-)]
-struct Cli {
-    /// Tampilkan nomor pada setiap baris output
-    #[arg(short, long)] // -n, --number
-    number: bool,
-
-    /// Nama tema syntax highlighting yang ingin digunakan (lihat --list-themes)
-    #[arg(long)] // --theme <NAMA>
-    theme: Option<String>, // Opsional
-
-    /// Tampilkan daftar semua tema yang tersedia dan keluar
-    #[arg(long)] // --list-themes
-    list_themes: bool,
-
-    /// Daftar file yang akan diproses (jika kosong, baca dari stdin)
-    #[arg()]
-    files: Vec<String>,
-}
-
-
-// --- Fungsi Helper untuk Mendapatkan Tema ---
-// Mengembalikan referensi ke tema berdasarkan nama, dengan fallback ke default
-fn get_theme<'a>(theme_name: &str) -> &'a Theme {
-    THEME_SET.themes.get(theme_name)
-        .unwrap_or_else(|| {
-            eprintln!(
-                "rcat: Peringatan: Tema '{}' tidak ditemukan. Menggunakan default 'base16-ocean.dark'.",
-                theme_name
-            );
-            // Fallback ke tema default yang pasti ada
-            &THEME_SET.themes["base16-ocean.dark"]
-        })
-}
-
-
-// --- Fungsi untuk Memproses Satu File ---
-fn process_file(filename: &str, number_lines: bool, theme_name: &str) -> io::Result<()> {
+fn process_file(
+    filename: &str,
+    cli: &Cli,
+    start_line: usize,
+    start_numbered: usize,
+) -> io::Result<(usize, usize)> {
     let path = Path::new(filename);
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
 
-    // Deteksi sintaks berdasarkan ekstensi file, fallback ke plain text
-    let syntax = SYNTAX_SET.find_syntax_by_extension(
-        path.extension().and_then(|s| s.to_str()).unwrap_or("")
-    ).unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
-
-    // Dapatkan tema menggunakan fungsi helper (sudah handle fallback)
-    let theme = get_theme(theme_name);
-
-    // Buat instance highlighter
-    let mut highlighter = HighlightLines::new(syntax, theme);
-
-    // Buka file dan siapkan reader
-    let file = File::open(filename)?;
-    let reader = BufReader::new(file);
-    let mut line_num = 1; // Counter nomor baris
-
-    // Proses baris per baris
-    for line_result in reader.lines() {
-        let line = line_result?; // Tangani error pembacaan baris
-
-        // Lakukan highlighting per baris
-        let ranges: Vec<(Style, &str)> = highlighter.highlight_line(&line, &SYNTAX_SET)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Syntect error: {}", e)))?; // Konversi error syntect ke io::Error
-
-        // Cetak nomor baris jika flag -n aktif
-        if number_lines {
-            print!("{:>6}\t", line_num); // Rata kanan, lebar 6, diikuti tab
-        }
-
-        // Cetak segmen baris yang sudah diwarnai
-        print!("{}", as_24_bit_terminal_escaped(&ranges[..], true));
-
-        // Tambahkan newline kembali (karena .lines() menghilangkannya)
-        println!();
-
-        // Increment nomor baris
-        line_num += 1;
+    // 1. Jika pengguna meminta Hex Dump secara eksplisit (-X, --hex)
+    if cli.hex {
+        let mut stdout = io::stdout().lock();
+        let is_full = matches!(cli.effective_style(), StyleMode::Full | StyleMode::Header);
+        hex::print_hex_dump(&mut reader, &mut stdout, Some(filename), is_full)?;
+        return Ok((start_line, start_numbered));
     }
 
-    Ok(()) // Kembalikan Ok jika sukses
+    // 2. Deteksi file biner (tanpa mengonsumsi buffer pembacaan)
+    let sample = reader.fill_buf()?;
+    if !cli.force && hex::is_binary_buffer(sample) {
+        eprintln!(
+            "rcat: '{}' terdeteksi sebagai file biner. Gunakan -X / --hex untuk melihat hex dump, atau -f / --force untuk memaksa teks.",
+            filename
+        );
+        return Ok((start_line, start_numbered));
+    }
+
+    // Baca baris pertama untuk deteksi sintaks (shebang / header)
+    let mut first_line_buf = String::new();
+    let has_first_line = reader.read_line(&mut first_line_buf)? > 0;
+    let first_line_str = if has_first_line {
+        Some(first_line_buf.trim_end_matches(['\r', '\n']))
+    } else {
+        None
+    };
+
+    let syntax = syntax::resolve_syntax(cli.language.as_deref(), Some(path), first_line_str);
+    let theme_name = cli.theme.as_deref().unwrap_or(syntax::DEFAULT_THEME);
+    let theme = syntax::get_theme(theme_name);
+    let highlighter = HighlightLines::new(syntax, theme);
+
+    let (init_line, init_num) =
+        if matches!(cli.effective_style(), StyleMode::Full | StyleMode::Header) {
+            (0, 0)
+        } else {
+            (start_line, start_numbered)
+        };
+
+    let mut printer = Printer::with_counters(cli, highlighter, Some(filename), init_line, init_num);
+
+    if cli.is_git_enabled() {
+        let tracker = git::GitDiffTracker::for_file(path);
+        printer.set_git_tracker(tracker);
+    }
+    let mut stdout = io::stdout().lock();
+
+    if let Some(first_line) = first_line_str {
+        printer.process_line(first_line, &mut stdout)?;
+        let mut line_buf = String::new();
+        while reader.read_line(&mut line_buf)? > 0 {
+            let trimmed = line_buf.trim_end_matches(['\r', '\n']);
+            printer.process_line(trimmed, &mut stdout)?;
+            line_buf.clear();
+        }
+    }
+
+    printer.print_footer(&mut stdout)?;
+    Ok(printer.counters())
 }
 
-
-// --- Fungsi untuk Memproses Standard Input ---
-fn process_stdin(number_lines: bool, theme_name: &str) -> io::Result<()> {
-    // Pesan info bahwa program menunggu input
-    eprintln!("(Membaca dari standard input. Tekan Ctrl+D untuk selesai)");
-
-    // Asumsikan stdin adalah plain text
-    let syntax = SYNTAX_SET.find_syntax_plain_text();
-
-    // Dapatkan tema menggunakan fungsi helper
-    let theme = get_theme(theme_name);
-
-    // Buat instance highlighter untuk plain text
-    let mut highlighter = HighlightLines::new(syntax, theme);
-
-    // Dapatkan handle ke stdin dan kunci untuk pembacaan
+fn process_stdin(cli: &Cli) -> io::Result<()> {
     let stdin = io::stdin();
-    let mut handle = stdin.lock();
+    let mut handle = BufReader::new(stdin.lock());
 
-    let mut line_num = 1; // Counter nomor baris
-    let mut line_buffer = String::new(); // Buffer untuk menampung tiap baris
-
-    // Baca dari stdin baris per baris sampai EOF
-    while handle.read_line(&mut line_buffer)? > 0 {
-        // Hilangkan newline di akhir sebelum highlighting
-        let trimmed_line = line_buffer.trim_end_matches('\n');
-
-        // Highlight baris (sebagai plain text)
-        let ranges: Vec<(Style, &str)> = highlighter
-            .highlight_line(trimmed_line, &SYNTAX_SET)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Syntect error: {}", e)))?; // Konversi error syntect ke io::Error
-
-        // Cetak nomor baris jika flag -n aktif
-        if number_lines {
-            print!("{:>6}\t", line_num);
-        }
-
-        // Cetak segmen baris yang sudah (atau tidak) di-highlight
-        print!("{}", as_24_bit_terminal_escaped(&ranges[..], true));
-
-        // Tambahkan newline kembali
-        println!();
-
-        // Naikkan nomor baris
-        line_num += 1;
-        // Kosongkan buffer untuk baris berikutnya
-        line_buffer.clear();
+    // 1. Jika pengguna meminta Hex Dump secara eksplisit (-X, --hex)
+    if cli.hex {
+        let mut stdout = io::stdout().lock();
+        let is_full = matches!(cli.effective_style(), StyleMode::Full | StyleMode::Header);
+        hex::print_hex_dump(&mut handle, &mut stdout, Some("stdin"), is_full)?;
+        return Ok(());
     }
 
-    Ok(()) // Kembalikan Ok jika sukses
+    // 2. Deteksi input biner
+    let sample = handle.fill_buf()?;
+    if !cli.force && hex::is_binary_buffer(sample) {
+        eprintln!(
+            "rcat: Input stdin terdeteksi sebagai data biner. Gunakan -X / --hex untuk melihat hex dump, atau -f / --force untuk memaksa teks."
+        );
+        return Ok(());
+    }
+
+    // Baca baris pertama untuk deteksi sintaks
+    let mut first_line_buf = String::new();
+    let has_first_line = handle.read_line(&mut first_line_buf)? > 0;
+    let first_line_str = if has_first_line {
+        Some(first_line_buf.trim_end_matches(['\r', '\n']))
+    } else {
+        None
+    };
+
+    let syntax = syntax::resolve_syntax(cli.language.as_deref(), None, first_line_str);
+    let theme_name = cli.theme.as_deref().unwrap_or(syntax::DEFAULT_THEME);
+    let theme = syntax::get_theme(theme_name);
+    let highlighter = HighlightLines::new(syntax, theme);
+
+    let mut printer = Printer::new(cli, highlighter, Some("stdin"));
+    let mut stdout = io::stdout().lock();
+
+    if let Some(first_line) = first_line_str {
+        printer.process_line(first_line, &mut stdout)?;
+        let mut line_buf = String::new();
+        while handle.read_line(&mut line_buf)? > 0 {
+            let trimmed = line_buf.trim_end_matches(['\r', '\n']);
+            printer.process_line(trimmed, &mut stdout)?;
+            line_buf.clear();
+        }
+    }
+
+    printer.print_footer(&mut stdout)?;
+    Ok(())
 }
 
-
-// --- Fungsi Utama (main) ---
 fn main() {
-    // Parse argumen command line menggunakan clap
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
-    // --- Handle jika pengguna meminta daftar tema ---
+    // Muat konfigurasi pengguna jika ada
+    let cfg = config::Config::load(cli.config.as_deref(), cli.no_config);
+    cli.apply_config(&cfg);
+
+    // 1. Tampilkan daftar tema jika diminta
     if cli.list_themes {
-        println!("Tema yang tersedia:");
-        // Iterasi melalui nama-nama tema yang dimuat
-        for theme_name in THEME_SET.themes.keys() {
-            println!("- {}", theme_name);
-        }
-        // Keluar program setelah mencetak daftar
+        syntax::print_themes();
         process::exit(0);
     }
 
-    // Flag untuk melacak jika terjadi error saat memproses file/stdin
-    let mut any_error_occurred = false;
+    // 2. Tampilkan daftar bahasa jika diminta
+    if cli.list_languages {
+        syntax::print_languages();
+        process::exit(0);
+    }
 
-    // Tentukan nama tema yang akan digunakan (dari argumen atau default)
-    let theme_name_to_use = cli.theme.as_deref().unwrap_or("base16-ocean.dark");
+    let mut any_error = false;
 
-    // --- Logika utama: proses stdin atau file ---
+    // 3. Proses input dari stdin atau file
     if cli.files.is_empty() {
-        // Jika tidak ada argumen file, proses standard input
-        match process_stdin(cli.number, theme_name_to_use) {
-            Ok(_) => {} // Sukses
-            Err(e) => {
-                eprintln!("rcat: Gagal membaca standard input: {}", e);
-                any_error_occurred = true; // Tandai ada error
-            }
+        if let Err(e) = process_stdin(&cli) {
+            eprintln!("rcat: Gagal membaca standard input: {}", e);
+            any_error = true;
         }
     } else {
-        // Jika ada argumen file, proses setiap file dalam loop
-        for filename in &cli.files {
-            match process_file(filename, cli.number, theme_name_to_use) {
-                Ok(_) => {} // Sukses untuk file ini
+        let mut current_line = 0;
+        let mut current_numbered = 0;
+
+        for (idx, filename) in cli.files.iter().enumerate() {
+            // Berikan spasi pemisah antar file jika mode Full atau Header
+            if idx > 0 && matches!(cli.effective_style(), StyleMode::Full | StyleMode::Header) {
+                println!();
+            }
+
+            match process_file(filename, &cli, current_line, current_numbered) {
+                Ok((next_line, next_num)) => {
+                    current_line = next_line;
+                    current_numbered = next_num;
+                }
                 Err(e) => {
-                    // Cetak error spesifik untuk file yang gagal
                     eprintln!("rcat: {}: {}", filename, e);
-                    any_error_occurred = true; // Tandai ada error
+                    any_error = true;
                 }
             }
         }
     }
 
-    // --- Tentukan status keluar program ---
-    // Jika ada error yang terjadi selama eksekusi, keluar dengan status 1
-    if any_error_occurred {
+    if any_error {
         process::exit(1);
     }
-    // Jika tidak ada error, program akan keluar secara normal dengan status 0
 }
