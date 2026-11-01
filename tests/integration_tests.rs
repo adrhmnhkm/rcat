@@ -193,3 +193,33 @@ fn test_custom_config_file() {
     assert!(stdout.contains("1 │"));
     assert!(stdout.contains("baris dari config test"));
 }
+
+#[test]
+fn test_highlight_flag() {
+    let test_file = "target/test_hl.txt";
+    fs::write(test_file, "penting: selesaikan TODO ini segera!\n").unwrap();
+
+    let output = rcat_cmd()
+        .args(["-H", "TODO", "--style", "plain", test_file])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let raw_stdout = String::from_utf8_lossy(&output.stdout);
+    // Escape code invert \x1b[1;7m harus ada di sekitar TODO
+    assert!(raw_stdout.contains("\x1b[1;7mTODO\x1b[27;22m"));
+}
+
+#[test]
+fn test_stats_flag() {
+    let test_file = "target/test_stats.txt";
+    fs::write(test_file, "satu dua tiga\nempat lima\n").unwrap();
+
+    let output = rcat_cmd()
+        .args(["--stats", test_file])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    assert!(stdout.contains("Baris: 2"));
+    assert!(stdout.contains("Kata: 5"));
+}

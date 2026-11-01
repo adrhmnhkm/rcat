@@ -22,6 +22,11 @@ pub struct Printer<'a> {
     prev_line_was_blank: bool,
     header_printed: bool,
     git_tracker: Option<GitDiffTracker>,
+    highlight_regex: Option<regex::Regex>,
+    copy_buffer: String,
+    total_words: usize,
+    total_chars: usize,
+    syntax_name: Option<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -52,7 +57,16 @@ impl<'a> Printer<'a> {
             prev_line_was_blank: false,
             header_printed: false,
             git_tracker: None,
+            highlight_regex: cli.highlight.as_deref().and_then(|h| regex::Regex::new(h).ok()),
+            copy_buffer: String::new(),
+            total_words: 0,
+            total_chars: 0,
+            syntax_name: None,
         }
+    }
+
+    pub fn set_syntax_name(&mut self, name: Option<String>) {
+        self.syntax_name = name;
     }
 
     pub fn set_git_tracker(&mut self, tracker: Option<GitDiffTracker>) {
@@ -118,6 +132,41 @@ impl<'a> Printer<'a> {
             return Ok(());
         }
 
+        // Tampilkan statistik jika diminta (--stats)
+        if self.cli.stats {
+            let label = self.file_label.unwrap_or("stdin");
+            let lang = self.syntax_name.as_deref().unwrap_or("Plain Text");
+            let stats_line = format!(
+                " File: {} │ Baris: {} │ Kata: {} │ Karakter: {} │ Bahasa: {}",
+                label, self.line_counter, self.total_words, self.total_chars, lang
+            );
+            match self.style_mode {
+                StyleMode::Full => {
+                    writeln!(
+                        writer,
+                        "{}───────┼──────────────────────────────────────────────────────────────────{}",
+                        COLOR_GRAY, COLOR_RESET
+                    )?;
+                    writeln!(
+                        writer,
+                        "{}       │{} {}{}{}",
+                        COLOR_GRAY, COLOR_RESET, COLOR_GRAY, stats_line, COLOR_RESET
+                    )?;
+                }
+                StyleMode::Header => {
+                    writeln!(
+                        writer,
+                        "{}──────────────────────────────────────────────────────────────────────────{}",
+                        COLOR_GRAY, COLOR_RESET
+                    )?;
+                    writeln!(writer, "{}{}{}", COLOR_GRAY, stats_line, COLOR_RESET)?;
+                }
+                _ => {
+                    writeln!(writer, "{}{}{}", COLOR_GRAY, stats_line, COLOR_RESET)?;
+                }
+            }
+        }
+
         match self.style_mode {
             StyleMode::Full => {
                 writeln!(
@@ -134,6 +183,18 @@ impl<'a> Printer<'a> {
                 )?;
             }
             _ => {}
+        }
+
+        // Salin ke clipboard jika diminta (-c, --copy)
+        if self.cli.copy && !self.copy_buffer.is_empty() {
+            if let Err(e) = crate::clipboard::copy_to_clipboard(&self.copy_buffer) {
+                eprintln!("rcat: Gagal menyalin ke clipboard: {}", e);
+            } else {
+                eprintln!(
+                    "\x1b[32mrcat: ✓ Berhasil disalin ke clipboard ({} baris)\x1b[0m",
+                    self.line_counter
+                );
+            }
         }
 
         Ok(())
@@ -161,6 +222,10 @@ impl<'a> Printer<'a> {
             .highlight_line(line, &SYNTAX_SET)
             .map_err(|e| io::Error::other(format!("Syntect error: {}", e)))?;
 
+        // Hitung statistik kata dan karakter
+        self.total_words += line.split_whitespace().count();
+        self.total_chars += line.chars().count();
+
         // 2. Line Range Filter (-r, --line-range)
         if let Some(ref range) = self.line_range
             && !range.contains(line_num)
@@ -168,11 +233,16 @@ impl<'a> Printer<'a> {
             return Ok(());
         }
 
+        if self.cli.copy {
+            self.copy_buffer.push_str(line);
+            self.copy_buffer.push('\n');
+        }
+
         // Pastikan header dicetak sebelum baris pertama keluar
         self.print_header(writer)?;
 
         // 3. Modifikasi Karakter TAB (-T, -A)
-        let formatted_content = if self.cli.display_tabs() {
+        let mut formatted_content = if self.cli.display_tabs() {
             // Highlight per-range lalu gantikan \t dengan ^I
             let mut highlighted_line = as_24_bit_terminal_escaped(&ranges[..], true);
             if highlighted_line.contains('\t') {
@@ -182,6 +252,11 @@ impl<'a> Printer<'a> {
         } else {
             as_24_bit_terminal_escaped(&ranges[..], true)
         };
+
+        // 3b. Keyword / Regex Highlighting (-H, --highlight)
+        if let Some(ref re) = self.highlight_regex {
+            formatted_content = re.replace_all(&formatted_content, "\x1b[1;7m$0\x1b[27;22m").to_string();
+        }
 
         // 4. Modifikasi Akhir Baris (-E, -A)
         let end_marker = if self.cli.display_ends() {
@@ -293,6 +368,10 @@ mod tests {
             no_config: false,
             git: false,
             no_git: false,
+            highlight: None,
+            copy: false,
+            stats: false,
+            image: false,
             files: vec![],
         };
 

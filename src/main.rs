@@ -1,7 +1,9 @@
 mod cli;
+mod clipboard;
 mod config;
 mod git;
 mod hex;
+mod image_view;
 mod printer;
 mod syntax;
 
@@ -21,6 +23,17 @@ fn process_file(
     start_numbered: usize,
 ) -> io::Result<(usize, usize)> {
     let path = Path::new(filename);
+
+    // 0. Jika file adalah gambar atau diminta dengan --image
+    if cli.image || (!cli.force && !cli.hex && image_view::is_image_file(path)) {
+        let mut stdout = io::stdout().lock();
+        let is_full = matches!(cli.effective_style(), StyleMode::Full | StyleMode::Header);
+        if let Err(e) = image_view::print_image_preview(path, &mut stdout, 75, is_full) {
+            eprintln!("rcat: Gagal menampilkan gambar '{}': {}", filename, e);
+        }
+        return Ok((start_line, start_numbered));
+    }
+
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
@@ -64,6 +77,7 @@ fn process_file(
         };
 
     let mut printer = Printer::with_counters(cli, highlighter, Some(filename), init_line, init_num);
+    printer.set_syntax_name(Some(syntax.name.clone()));
 
     if cli.is_git_enabled() {
         let tracker = git::GitDiffTracker::for_file(path);
@@ -121,6 +135,7 @@ fn process_stdin(cli: &Cli) -> io::Result<()> {
     let highlighter = HighlightLines::new(syntax, theme);
 
     let mut printer = Printer::new(cli, highlighter, Some("stdin"));
+    printer.set_syntax_name(Some(syntax.name.clone()));
     let mut stdout = io::stdout().lock();
 
     if let Some(first_line) = first_line_str {

@@ -39,6 +39,10 @@
 |---|:---:|:---:|:---:|
 | **Syntax Highlighting** | ❌ | ✅ | ✅ |
 | **Git Gutter Diff (`+`, `~`, `-`)** | ❌ | ✅ | ✅ |
+| **Terminal Image Preview (`.png`, `.jpg`)** | ❌ | ❌ | ✅ *(truecolor half-blocks)* |
+| **Keyword / Regex Highlight (`-H`)** | ❌ | ✅ | ✅ |
+| **Copy to Clipboard (`-c`)** | ❌ | ❌ | ✅ *(OSC 52 + Native)* |
+| **File Stats & Metadata (`--stats`)** | ❌ | ❌ | ✅ |
 | **Binary Protection** | ❌ *(corrupts terminal)* | ✅ | ✅ *(graceful warning)* |
 | **Built-in Hex Dump Viewer (`-X`)** | ❌ | ❌ | ✅ *(xxd-like colored hex dump)* |
 | **Line Range Selection (`-r`)** | ❌ | ✅ | ✅ |
@@ -51,9 +55,13 @@
 ## ✨ Key Features
 
 - 🎨 **Automatic Syntax Highlighting**: Detects language automatically via file extensions or shebang headers (`#!/bin/...`).
+- 🖼️ **Terminal Image Preview**: Renders `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp` directly in the terminal using 24-bit RGB and Unicode half-blocks (`▀`).
+- 🔍 **Keyword & Regex Highlighting (`-H, --highlight`)**: Prominently highlights matching search terms without breaking underlying syntax highlighting.
+- 📋 **Copy to Clipboard (`-c, --copy`)**: Automatically copies the displayed output to your system clipboard (universal OSC 52 + native fallback).
+- 📊 **File Statistics & Metadata (`--stats`)**: Shows detailed line count, word count, character count, and detected language in a sleek footer.
 - 🌿 **Git Integration**: Live gutter indicators for newly added (`+`), modified (`~`), or removed (`-`) lines directly against your git repository.
 - 🛡️ **Binary File Protection**: Prevents accidental terminal corruption by checking for binary content before printing.
-- 🔍 **Interactive Hex Dump Mode (`-X, --hex`)**: Inspect binaries or files with a colored 3-column hex viewer (Offset, Hex Bytes, ASCII).
+- 🔬 **Interactive Hex Dump Mode (`-X, --hex`)**: Inspect binaries or files with a colored 3-column hex viewer (Offset, Hex Bytes, ASCII).
 - 📋 **GNU `cat` Compatibility**: Full support for `-n` (number), `-b` (number-nonblank), `-s` (squeeze-blank), `-E` (show-ends), `-T` (show-tabs), and `-A` (show-all).
 - ⚙️ **Persistent User Configuration (`config.toml`)**: Set your preferred themes and styles once and enjoy them everywhere.
 - 🚀 **Zero C Dependencies**: Built with pure Rust dependencies for maximum cross-platform portability across Windows, Linux, and macOS.
@@ -95,22 +103,43 @@ rcat -r 10:30 src/main.rs
 rcat -r 20: src/main.rs
 ```
 
-### 4. Inspect binary file as Hex Dump
+### 4. Highlight specific keywords or regex pattern
+```bash
+rcat -H "TODO" src/main.rs
+rcat -H "process_[a-z]+" src/main.rs
+```
+
+### 5. Render image directly in terminal
+```bash
+rcat assets/showcase.png
+```
+
+### 6. Copy output directly to clipboard
+```bash
+rcat -r 1:25 src/main.rs -c
+```
+
+### 7. Display file metadata & statistics
+```bash
+rcat --stats Cargo.toml
+```
+
+### 8. Inspect binary file as Hex Dump
 ```bash
 rcat -X binary_file.exe
 ```
 
-### 5. Standard GNU `cat` behavior (Squeeze blanks & show ends)
+### 9. Standard GNU `cat` behavior (Squeeze blanks & show ends)
 ```bash
 rcat -s -A file.txt
 ```
 
-### 6. Read from stdin with manual syntax override
+### 10. Read from stdin with manual syntax override
 ```bash
 curl -s https://api.github.com | rcat -l json
 ```
 
-### 7. Choose from dozens of themes
+### 11. Choose from dozens of themes
 ```bash
 rcat --list-themes
 rcat --theme "Solarized (dark)" src/main.rs
@@ -159,6 +188,10 @@ rcat --no-config main.rs
 | `-A, --show-all` | Equivalent to `-ET` |
 | `-r, --line-range <M:N>` | Only print lines in range (`10:25`, `:50`, `15:`, `42`) |
 | `-l, --language <LANG>` | Force syntax language manually (e.g. `rust`, `python`) |
+| `-H, --highlight <PAT>` | Highlight keywords or regex patterns in output |
+| `-c, --copy` | Copy displayed output directly to system clipboard |
+| `--stats` | Display file metadata & statistics in footer |
+| `--image` | Force rendering input file as an image |
 | `-X, --hex` | Display content in colored Hex Dump format |
 | `-f, --force` | Force printing raw text even if binary data is detected |
 | `--style <MODE>` | Style preset: `plain`, `numbers`, `grid`, `header`, `full` |

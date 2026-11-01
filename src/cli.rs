@@ -149,6 +149,22 @@ pub struct Cli {
     #[arg(long = "no-git")]
     pub no_git: bool,
 
+    /// Sorot kata kunci atau pola regex tertentu di output
+    #[arg(short = 'H', long = "highlight")]
+    pub highlight: Option<String>,
+
+    /// Salin teks yang ditampilkan langsung ke clipboard
+    #[arg(short = 'c', long = "copy")]
+    pub copy: bool,
+
+    /// Tampilkan statistik & metadata file di footer
+    #[arg(long = "stats")]
+    pub stats: bool,
+
+    /// Tampilkan file gambar langsung di terminal
+    #[arg(long = "image")]
+    pub image: bool,
+
     /// Daftar file yang akan diproses (jika kosong, baca dari stdin)
     #[arg()]
     pub files: Vec<String>,
