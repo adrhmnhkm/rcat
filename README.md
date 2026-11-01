@@ -12,27 +12,24 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
 </p>
 
+<p align="center">
+  <a href="#-key-features">Key Features</a> •
+  <a href="#-comparison-table">Comparison</a> •
+  <a href="#-installation">Installation</a> •
+  <a href="#-usage--examples">Usage</a> •
+  <a href="#️-configuration-configtoml">Configuration</a> •
+  <a href="#-contributing">Contributing</a>
+</p>
+
 ---
 
-## 📸 Terminal Showcase
+<p align="center">
+  <img src="assets/demo.gif" alt="rcat animated terminal demo" width="860" style="border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);" />
+</p>
 
-```text
-───────┬──────────────────────────────────────────────────────────────────
-       │ src/main.rs
-───────┼──────────────────────────────────────────────────────────────────
-     1 │ mod cli;
-     2 │ mod config;
-     3+│ mod git;
-     4+│ mod hex;
-     5 │ mod printer;
-     6 │ mod syntax;
-     7 │ 
-     8~│ use clap::Parser;
-     9 │ use printer::Printer;
-───────┴──────────────────────────────────────────────────────────────────
-```
-
-*Built-in Git diff tracking (`+` added, `~` modified, `-` deleted), clean line gutters, and syntax highlighting!*
+<p align="center">
+  <em>🔥 Live demo: Full Frame style with Git Diffs (<code>~│</code>), Line Range filtering, and colored Hex Dump view!</em>
+</p>
 
 ---
 
@@ -65,7 +62,7 @@
 
 ## 📦 Installation
 
-### From Pre-compiled Binaries (GitHub Releases)
+### Pre-compiled Binaries (GitHub Releases)
 Download ready-to-use binaries for Windows (`.zip`), Linux (`.tar.gz`), and macOS (`.tar.gz`) directly from the [Releases](https://github.com/adrhmnhkm/rcat/releases) page.
 
 ### From Source (using Cargo)
@@ -93,6 +90,7 @@ rcat --style full Cargo.toml
 ### 3. Display line range (e.g. lines 10 to 30)
 ```bash
 rcat -r 10:30 src/main.rs
+
 # From line 20 to EOF
 rcat -r 20: src/main.rs
 ```
@@ -170,6 +168,16 @@ rcat --no-config main.rs
 | `--git / --no-git` | Toggle Git diff indicators |
 | `--config <PATH>` | Load custom TOML configuration file |
 | `--no-config` | Disable loading user configuration |
+
+---
+
+## 🌟 Star History
+
+<p align="center">
+  <a href="https://star-history.com/#adrhmnhkm/rcat&Date">
+    <img src="https://api.star-history.com/svg?repos=adrhmnhkm/rcat&type=Date" alt="Star History Chart" width="700" />
+  </a>
+</p>
 
 ---
 
