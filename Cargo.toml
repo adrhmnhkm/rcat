@@ -2,7 +2,7 @@
 name = "rcat"
 version = "0.1.0"
 edition = "2024"
-authors = ["Adi Rahman Hakim <adrhmnhkm@gmail.com>"]
+authors = ["Adi Rahman Hakim"]
 description = "A modern, blazingly fast cat alternative written in pure Rust with syntax highlighting, git integration, and hex viewer."
 license = "MIT"
 repository = "https://github.com/adrhmnhkm/rcat"

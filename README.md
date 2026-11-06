@@ -227,6 +227,13 @@ Feel free to check the [issues page](https://github.com/adrhmnhkm/rcat/issues).
 
 ---
 
+## 👤 Author
+
+**Adi Rahman Hakim**
+- GitHub: [@adrhmnhkm](https://github.com/adrhmnhkm)
+
+---
+
 ## 📄 License
 
 Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more information.
