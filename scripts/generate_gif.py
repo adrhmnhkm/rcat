@@ -199,6 +199,11 @@ def main():
     subprocess.run(gif_cmd, check=True)
     print("assets/demo.gif successfully created!")
 
+    # Update showcase.png as well
+    if os.path.exists("target/frames/frame_0060.png"):
+        shutil.copyfile("target/frames/frame_0060.png", "assets/showcase.png")
+        print("assets/showcase.png successfully updated!")
+
 if __name__ == '__main__':
     main()
 
